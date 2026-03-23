@@ -4,14 +4,13 @@ from discord import app_commands
 import sqlite3
 import datetime
 import uuid
-import os  # [수정] 환경 변수 사용을 위해 추가
+import os  # 환경 변수 사용
 import calendar
 
 # --- [1] 보안 및 관리자 설정 ---
 ADMIN_ID = 1461982946658488411 # jihunqp 전용 ID
 
 def init_db():
-    # Render 환경에서도 파일이 생성되도록 경로 설정
     conn = sqlite3.connect("velox_core.db", check_same_thread=False)
     cur = conn.cursor()
     cur.execute("CREATE TABLE IF NOT EXISTS licenses (key TEXT PRIMARY KEY, days INTEGER)")
@@ -51,7 +50,7 @@ class VeloxBot(commands.Bot):
             try:
                 new_embed = await build_monitor_embed()
                 await self.monitor_msg.edit(embed=new_embed)
-            except Exception as e:
+            except Exception:
                 pass
 
     @tasks.loop(minutes=5)
@@ -62,12 +61,7 @@ class VeloxBot(commands.Bot):
 
 bot = VeloxBot()
 
-# --- [4] UI 컴포넌트 (NeonStatsView, VeloxMenuView 등 기존 코드와 동일) ---
-# (지면 관계상 핵심 로직은 유지하되, 기존 코드의 class들을 그대로 사용하시면 됩니다.)
-# ... [NeonStatsView 클래스 내용 입력] ...
-# ... [VeloxMenuView 클래스 내용 입력] ...
-
-# (기존 UI 클래스 생략 - 그대로 유지하세요)
+# --- [4] UI 컴포넌트 ---
 class NeonStatsView(discord.ui.View):
     def __init__(self, user, current_date):
         super().__init__(timeout=60)
@@ -150,6 +144,7 @@ class VeloxMenuView(discord.ui.View):
         v = NeonStatsView(interaction.user, datetime.datetime.now())
         await interaction.response.send_message(embed=v.get_embed(), view=v, ephemeral=True)
 
+# --- [5] 현황판 빌더 ---
 async def build_monitor_embed():
     cursor.execute("SELECT user_id, start_time FROM attendance WHERE status = 'ON'")
     members = cursor.fetchall()
@@ -166,11 +161,9 @@ async def build_monitor_embed():
     return embed
 
 # --- [6] 명령어 세트 ---
-
 @bot.tree.command(name="생성", description="[관리자] 라이선스 키 생성")
 @is_owner()
 async def create_license(interaction: discord.Interaction, 기간: int):
-    # [수정] 터미널 대신 디스코드 명령어로 키 생성
     key = f"VX-{uuid.uuid4().hex[:14].upper()}"
     cursor.execute("INSERT INTO licenses (key, days) VALUES (?, ?)", (key, 기간))
     db_conn.commit()
@@ -194,7 +187,6 @@ async def verify_cmd(interaction: discord.Interaction, 키: str):
     cursor.execute("SELECT days FROM licenses WHERE key = ?", (키,))
     res = cursor.fetchone()
     if not res: return await interaction.response.send_message("❌ 이미 사용되었거나 없는 키입니다.", ephemeral=True)
-    
     expiry = datetime.datetime.now() + datetime.timedelta(days=res[0])
     cursor.execute("INSERT OR REPLACE INTO users (user_id, is_verified, expiry_date) VALUES (?, 1, ?)", (interaction.user.id, expiry))
     cursor.execute("DELETE FROM licenses WHERE key = ?", (키,))
@@ -202,6 +194,5 @@ async def verify_cmd(interaction: discord.Interaction, 키: str):
     await interaction.response.send_message(f"✅ 인증 완료! 만료일: {expiry.date()}", ephemeral=True)
 
 # --- [7] 실행 ---
-# [수정] 토큰은 환경변수에서 가져오도록 변경
 token = os.getenv("DISCORD_TOKEN")
 bot.run(token)
