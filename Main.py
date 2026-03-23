@@ -210,4 +210,6 @@ def terminal():
         except: pass
 
 threading.Thread(target=terminal, daemon=True).start()
-bot.run("MTQ4NDE5ODI1NDE2MDc3NzQ0Nw.GFd_pq.M6NQrijoj211gJqUpMtsy-CSKTYQwvIk1Tn0WU")
+import os
+token = os.getenv("DISCORD_TOKEN")
+bot.run(token)
