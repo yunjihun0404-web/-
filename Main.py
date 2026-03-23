@@ -4,7 +4,7 @@ from discord import app_commands
 import sqlite3
 import datetime
 import uuid
-import os  # 환경 변수 사용
+import os  # 환경 변수 사용을 위해 추가
 import calendar
 
 # --- [1] 보안 및 관리자 설정 ---
@@ -50,8 +50,7 @@ class VeloxBot(commands.Bot):
             try:
                 new_embed = await build_monitor_embed()
                 await self.monitor_msg.edit(embed=new_embed)
-            except Exception:
-                pass
+            except Exception: pass
 
     @tasks.loop(minutes=5)
     async def expiry_check_loop(self):
@@ -194,5 +193,6 @@ async def verify_cmd(interaction: discord.Interaction, 키: str):
     await interaction.response.send_message(f"✅ 인증 완료! 만료일: {expiry.date()}", ephemeral=True)
 
 # --- [7] 실행 ---
+# 코드를 실행하기 전 반드시 Render Environment Variables에 DISCORD_TOKEN을 설정하세요.
 token = os.getenv("DISCORD_TOKEN")
 bot.run(token)
