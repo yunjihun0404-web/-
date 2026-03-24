@@ -37,7 +37,7 @@ db_conn, cursor = init_db()
 
 def get_now(): return datetime.datetime.now(KST)
 
-# --- [2] 하이엔드 네온 UI 컴포넌트 ---
+# --- [2] UI 컴포넌트 ---
 class NeonStatsView(discord.ui.View):
     def __init__(self, user, current_date):
         super().__init__(timeout=60)
@@ -63,15 +63,13 @@ class NeonStatsView(discord.ui.View):
             cal_display += w_str + "\n"
             
         total_sec = sum(logs.values())
-        d, r1 = divmod(total_sec, 86400)
-        h, r2 = divmod(r1, 3600)
+        h, r2 = divmod(total_sec, 3600)
         m_curr, s_curr = divmod(r2, 60)
         
         embed = discord.Embed(title=f"🪐 {y}/{m} PROTOCOL ANALYTICS", color=0x00FFFF)
         embed.description = f"```ml\n{cal_display}```"
         embed.add_field(name="🛰️ CUMULATIVE UPTIME", 
-                        value=f"**`{d}일 {h}시간 {m_curr}분 {s_curr}초`**", inline=False)
-        embed.set_footer(text="VELOXCORE TACTICAL OS | ENCRYPTED DATA")
+                        value=f"**`{h}시간 {m_curr}분 {s_curr}초`**", inline=False)
         return embed
 
     @discord.ui.button(label="PREV", style=discord.ButtonStyle.secondary, emoji="⬅️")
@@ -150,22 +148,22 @@ class VeloxBot(commands.Bot):
                 cursor.execute("SELECT user_id, start_time FROM attendance WHERE status = 'ON'")
                 members = cursor.fetchall()
                 embed = discord.Embed(title="📡 LIVE TACTICAL MONITORING", color=0x00FFFF)
-                embed.set_thumbnail(url="https://i.imgur.com/B9O0W3L.png") # 네온 아이콘 예시
-                
                 desc = "🛰️ **[ ACTIVE OPERATIONAL NODES ]**\n" + "━" * 28 + "\n"
+                
                 if not members:
                     desc += "❌ 현재 활성화된 세션이 없습니다."
                 else:
                     for uid, start in members:
                         s_dt = datetime.datetime.strptime(start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=KST)
                         diff = get_now() - s_dt
-                        # 일, 시간, 분, 초 단위로 변환
-                        days = diff.days
-                        hours, rem = divmod(diff.seconds, 3600)
+                        # -1 같은 오류 없이 순수 경과 시간 계산
+                        total_seconds = int(diff.total_seconds())
+                        if total_seconds < 0: total_seconds = 0
+                        
+                        hours, rem = divmod(total_seconds, 3600)
                         minutes, seconds = divmod(rem, 60)
                         
-                        time_str = f"{days}일 {hours}시간 {minutes}분 {seconds}초" if days > 0 else f"{hours}시간 {minutes}분 {seconds}초"
-                        desc += f"👤 <@{uid}>\n┗ ⚡ **UPTIME:** `{time_str}`\n"
+                        desc += f"👤 <@{uid}>\n┗ ⚡ **UPTIME:** `{hours}시간 {minutes}분 {seconds}초`\n"
                 
                 embed.description = desc
                 embed.set_footer(text=f"PULSE: {get_now().strftime('%Y-%m-%d %H:%M:%S')} KST")
@@ -188,7 +186,6 @@ async def create_license(interaction: discord.Interaction, 기간: int):
     key = f"VX-{uuid.uuid4().hex[:14].upper()}"
     cursor.execute("INSERT INTO licenses (key, days) VALUES (?, ?)", (key, 기간))
     db_conn.commit()
-    
     embed = discord.Embed(title="🔑 LICENSE GENERATED", color=0xFFFF00)
     embed.add_field(name="KEY", value=f"```css\n{key}```", inline=False)
     embed.add_field(name="VALIDITY", value=f"`{기간}` Days", inline=True)
@@ -213,7 +210,6 @@ async def force_stop(interaction: discord.Interaction, 유저: discord.Member):
 async def menu_cmd(interaction: discord.Interaction):
     embed = discord.Embed(title="⚡ VELOXCORE TACTICAL CENTER", color=0xFF00FF)
     embed.description = "시스템 가동 상태 및 실적 로그를 관리합니다."
-    embed.set_image(url="https://i.imgur.com/B9O0W3L.png") # 네온 라인 하단 이미지
     await interaction.response.send_message(embed=embed, view=VeloxMenuView())
 
 @bot.tree.command(name="인증", description="라이선스 키 등록")
@@ -221,13 +217,11 @@ async def verify_cmd(interaction: discord.Interaction, 키: str):
     cursor.execute("SELECT days FROM licenses WHERE key = ?", (키,))
     res = cursor.fetchone()
     if not res: return await interaction.response.send_message("❌ 유효하지 않은 키입니다.", ephemeral=True)
-    
     expiry = get_now() + datetime.timedelta(days=res[0])
     expiry_str = expiry.strftime('%Y-%m-%d %H:%M:%S')
     cursor.execute("INSERT OR REPLACE INTO users (user_id, is_verified, expiry_date) VALUES (?, 1, ?)", (interaction.user.id, expiry_str))
     cursor.execute("DELETE FROM licenses WHERE key = ?", (키,))
     db_conn.commit()
-    
     embed = discord.Embed(title="✅ AUTHENTICATION COMPLETE", color=0x00FF00)
     embed.description = f"시스템 권한이 승인되었습니다.\n**만료일:** `{expiry_str}`"
     await interaction.response.send_message(embed=embed, ephemeral=True)
