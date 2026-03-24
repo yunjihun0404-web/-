@@ -12,7 +12,7 @@ from threading import Thread
 
 # --- [0] 환경 및 보안 설정 ---
 KST = pytz.timezone('Asia/Seoul')
-ADMIN_ID = 1461982946658488411  # jihunqp 전용 보안 식별자
+ADMIN_ID = 1461982946658488411  # jihunqp 전용
 
 app = Flask('')
 @app.route('/')
@@ -22,13 +22,18 @@ def run_web():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# --- [1] 데이터베이스 ---
+# --- [1] 데이터베이스 (영구 저장 강화) ---
 def init_db():
+    # 파일 이름을 고정하여 재시작 시에도 해당 파일을 읽도록 설정
     conn = sqlite3.connect("velox_ultimate.db", check_same_thread=False)
     cur = conn.cursor()
+    # 라이선스 키 저장소
     cur.execute("CREATE TABLE IF NOT EXISTS licenses (key TEXT PRIMARY KEY, days INTEGER)")
-    cur.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, is_verified INTEGER DEFAULT 0, expiry_date DATETIME)")
-    cur.execute("CREATE TABLE IF NOT EXISTS attendance (user_id INTEGER PRIMARY KEY, start_time DATETIME, status TEXT DEFAULT 'OFF')")
+    # 유저 인증 및 만료 정보
+    cur.execute("CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, is_verified INTEGER DEFAULT 0, expiry_date TEXT)")
+    # 현재 가동 상태 (세션)
+    cur.execute("CREATE TABLE IF NOT EXISTS attendance (user_id INTEGER PRIMARY KEY, start_time TEXT, status TEXT DEFAULT 'OFF')")
+    # 누적 작업 로그
     cur.execute("CREATE TABLE IF NOT EXISTS work_logs (log_id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, work_date TEXT, seconds INTEGER)")
     conn.commit()
     return conn, cur
@@ -104,9 +109,10 @@ class VeloxMenuView(discord.ui.View):
         cursor.execute("SELECT status FROM attendance WHERE user_id = ?", (interaction.user.id,))
         row = cursor.fetchone()
         if row and row[0] == 'ON': return await interaction.response.send_message("⚠️ 이미 가동 중입니다.", ephemeral=True)
+        
         now_str = get_now().strftime('%Y-%m-%d %H:%M:%S')
         cursor.execute("INSERT OR REPLACE INTO attendance (user_id, start_time, status) VALUES (?, ?, 'ON')", (interaction.user.id, now_str))
-        db_conn.commit()
+        db_conn.commit() # 즉시 저장
         await interaction.response.send_message("🔋 **OPERATIONAL.** 가동 세션을 시작합니다.", ephemeral=True)
 
     @discord.ui.button(label="TERMINATE", style=discord.ButtonStyle.danger, emoji="🏁")
@@ -121,7 +127,7 @@ class VeloxMenuView(discord.ui.View):
         cursor.execute("INSERT INTO work_logs (user_id, work_date, seconds) VALUES (?, ?, ?)", 
                        (interaction.user.id, get_now().strftime('%Y-%m-%d'), sec))
         cursor.execute("UPDATE attendance SET status = 'OFF' WHERE user_id = ?", (interaction.user.id,))
-        db_conn.commit()
+        db_conn.commit() # 즉시 저장
         await interaction.response.send_message(f"🏁 **TERMINATED.** 가동 시간: `{sec//3600}시간 {(sec%3600)//60}분 {sec%60}초`", ephemeral=True)
 
     @discord.ui.button(label="ANALYTICS", style=discord.ButtonStyle.primary, emoji="📊")
@@ -155,14 +161,10 @@ class VeloxBot(commands.Bot):
                 else:
                     for uid, start in members:
                         s_dt = datetime.datetime.strptime(start, '%Y-%m-%d %H:%M:%S').replace(tzinfo=KST)
-                        diff = get_now() - s_dt
-                        # -1 같은 오류 없이 순수 경과 시간 계산
-                        total_seconds = int(diff.total_seconds())
+                        total_seconds = int((get_now() - s_dt).total_seconds())
                         if total_seconds < 0: total_seconds = 0
-                        
                         hours, rem = divmod(total_seconds, 3600)
                         minutes, seconds = divmod(rem, 60)
-                        
                         desc += f"👤 <@{uid}>\n┗ ⚡ **UPTIME:** `{hours}시간 {minutes}분 {seconds}초`\n"
                 
                 embed.description = desc
@@ -172,11 +174,11 @@ class VeloxBot(commands.Bot):
 
 bot = VeloxBot()
 
-# --- [4] 관리자 전용 명령어 (jihunqp 전용) ---
+# --- [4] 관리자 전용 명령어 ---
 def is_admin():
     async def predicate(interaction: discord.Interaction):
         if interaction.user.id == ADMIN_ID: return True
-        await interaction.response.send_message("🚫 **접근 거부: 관리자 전용 명령어입니다.**", ephemeral=True)
+        await interaction.response.send_message("🚫 **접근 거부: 관리자 전용입니다.**", ephemeral=True)
         return False
     return app_commands.check(predicate)
 
@@ -185,7 +187,7 @@ def is_admin():
 async def create_license(interaction: discord.Interaction, 기간: int):
     key = f"VX-{uuid.uuid4().hex[:14].upper()}"
     cursor.execute("INSERT INTO licenses (key, days) VALUES (?, ?)", (key, 기간))
-    db_conn.commit()
+    db_conn.commit() # 즉시 저장
     embed = discord.Embed(title="🔑 LICENSE GENERATED", color=0xFFFF00)
     embed.add_field(name="KEY", value=f"```css\n{key}```", inline=False)
     embed.add_field(name="VALIDITY", value=f"`{기간}` Days", inline=True)
@@ -217,11 +219,13 @@ async def verify_cmd(interaction: discord.Interaction, 키: str):
     cursor.execute("SELECT days FROM licenses WHERE key = ?", (키,))
     res = cursor.fetchone()
     if not res: return await interaction.response.send_message("❌ 유효하지 않은 키입니다.", ephemeral=True)
+    
     expiry = get_now() + datetime.timedelta(days=res[0])
     expiry_str = expiry.strftime('%Y-%m-%d %H:%M:%S')
     cursor.execute("INSERT OR REPLACE INTO users (user_id, is_verified, expiry_date) VALUES (?, 1, ?)", (interaction.user.id, expiry_str))
     cursor.execute("DELETE FROM licenses WHERE key = ?", (키,))
-    db_conn.commit()
+    db_conn.commit() # 데이터베이스 파일에 즉시 영구 저장
+    
     embed = discord.Embed(title="✅ AUTHENTICATION COMPLETE", color=0x00FF00)
     embed.description = f"시스템 권한이 승인되었습니다.\n**만료일:** `{expiry_str}`"
     await interaction.response.send_message(embed=embed, ephemeral=True)
